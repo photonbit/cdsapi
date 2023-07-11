@@ -17,6 +17,16 @@ import uuid
 import pkg_resources
 import requests
 
+from cdsapi.exceptions import (
+    APIError,
+    CDSAPIException,
+    DownloadFailed,
+    FailedTask,
+    MaxRetriesExceeded,
+    MissingSettings,
+    UnknownState,
+)
+
 try:
     from urllib.parse import urljoin
 except ImportError:
@@ -157,7 +167,7 @@ class Result(object):
             self.warning("Resuming download at byte %s" % (total,))
 
         if total != size:
-            raise Exception(
+            raise DownloadFailed(
                 "Download failed: downloaded %s byte(s) out of %s" % (total, size)
             )
 
@@ -301,7 +311,7 @@ class Client(object):
                     verify = bool(int(config.get("verify", 1)))
 
         if url is None or key is None or key is None:
-            raise Exception("Missing/incomplete configuration file: %s" % (dotrc))
+            raise MissingSettings("Missing/incomplete configuration file: %s" % (dotrc))
 
         # If verify is still None, then we set to default value of True
         if verify is None:
@@ -441,7 +451,7 @@ class Client(object):
         try:
             result.raise_for_status()
             reply = result.json()
-        except Exception:
+        except Exception as e:
             if reply is None:
                 try:
                     reply = result.json()
@@ -461,9 +471,9 @@ class Client(object):
                             "of '%s' at %s" % (t["title"], t["url"])
                         )
                     error = ". ".join(e)
-                raise Exception(error)
+                raise APIError(error) from e
             else:
-                raise
+                raise CDSAPIException("The request resulted in an error without a message.") from e
 
         if not self.wait_until_complete:
             return Result(self, reply)
@@ -516,12 +526,12 @@ class Client(object):
                     if n.strip() == "" and not self.full_stack:
                         break
                     self.error("  %s", n)
-                raise Exception(
+                raise FailedTask(
                     "%s. %s."
                     % (reply["error"].get("message"), reply["error"].get("reason"))
                 )
 
-            raise Exception("Unknown API state [%s]" % (reply["state"],))
+            raise UnknownState("Unknown API state [%s]" % (reply["state"],))
 
     def info(self, *args, **kwargs):
         if self.info_callback:
@@ -638,7 +648,7 @@ class Client(object):
                     time.sleep(self.sleep_max)
                     self.info("Retrying now...")
                 else:
-                    raise Exception("Could not connect")
+                    raise MaxRetriesExceeded("Could not connect")
 
             return resp
 
